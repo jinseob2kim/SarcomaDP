@@ -159,36 +159,113 @@ for (vname in names(c)[c(128:135, 137:139)]){
   out[[vn.new]] <- as.integer(c[[vname]])
 }
 
+write.csv(out,"out.csv",row.names=F)
+
+#-직접 Table1 만들어보기---------------------------------------------------------------------------------------------------
+
+library(data.table)
+
+tab1<-data.frame("variable"=character(),
+                         "subgroup"=character(),
+                         "DP"=character(),"nonDP"=character(),
+                         "pvalue"=numeric())
+
+for(i in 1:ncol(out)){
+  va<-names(out)[i]
+  
+  if((is.numeric(out[[va]]) | is.integer(out[[va]])) & length(table(out[va]))>5){
+    #continous
+    ttest<-t.test(out[[va]]~out$DP,data=out,var.equal=F)
+    tab1<-rbind(tab1,
+                data.frame("variable"=va,
+                           "subgroup"=" ",
+                           "DP"=paste(round(ttest$estimate[1],2),"(",round(as.numeric(by(out[[va]],out$DP,sd)[1]),2),")"),
+                           "nonDP"=paste(round(ttest$estimate[2],2),"(",round(as.numeric(by(out[[va]],out$DP,sd)[2]),2),")"),
+                           "pvalue"=round(ttest$p.value,3)))
+  }else if(length(table(out[va]))<=5 & length(table(out[va]))>=2){
+    #factor
+    tb.va<-table(data.frame(out[[va]],out$DP))
+    cchisq<-chisq.test(tb.va)
+    check.fisher<-0
+    for(ii in 1:nrow(tb.va)){
+      for(jj in 1:ncol(tb.va)){
+        if(cchisq$expected[ii,jj]<5){
+          check.fisher<-1
+          break
+        }
+      }
+    }
+
+    if(check.fisher==0){
+      #chi-square test
+      for(ii in 1:nrow(tb.va)){
+        if(ii==1){
+          tab1<-rbind(tab1,
+                      data.frame("variable"=paste(va,"(%)"),
+                                 "subgroup"=rownames(tb.va)[ii],
+                                 "DP"=paste(tb.va[ii,1],"(",round(tb.va[ii,1]/colSums(tb.va)[1]*100,2),")"),
+                                 "nonDP"=paste(tb.va[ii,2],"(",round(tb.va[ii,2]/colSums(tb.va)[2]*100,2),")"),
+                                 "pvalue"=round(cchisq$p.value,3)))
+        }else{
+          tab1<-rbind(tab1,
+                      data.frame("variable"=" ",
+                                 "subgroup"=rownames(tb.va)[ii],
+                                 "DP"=paste(tb.va[ii,1],"(",round(tb.va[ii,1]/colSums(tb.va)[1]*100,2),")"),
+                                 "nonDP"=paste(tb.va[ii,2],"(",round(tb.va[ii,2]/colSums(tb.va)[2]*100,2),")"),
+                                 "pvalue"=" "))
+        }
+      }
+      
+    }else
+    {
+      #fisher's test
+      ffisher<-fisher.test(tb.va)
+      for(ii in 1:nrow(tb.va)){
+        if(ii==1){
+          tab1<-rbind(tab1,
+                      data.frame("variable"=va,
+                                 "subgroup"=rownames(tb.va)[ii],
+                                 "DP"=paste(tb.va[ii,1],"(",round(tb.va[ii,1]/colSums(tb.va)[1]*100,2),")"),
+                                 "nonDP"=paste(tb.va[ii,2],"(",round(tb.va[ii,2]/colSums(tb.va)[2]*100,2),")"),
+                                 "pvalue"=round(ffisher$p.value,3)))
+        }else{
+          tab1<-rbind(tab1,
+                      data.frame("variable"=" ",
+                                 "subgroup"=rownames(tb.va)[ii],
+                                 "DP"=paste(tb.va[ii,1],"(",round(tb.va[ii,1]/colSums(tb.va)[1]*100,2),")"),
+                                 "nonDP"=paste(tb.va[ii,2],"(",round(tb.va[ii,2]/colSums(tb.va)[2]*100,2),")"),
+                                 "pvalue"=" "))
+        }
+      }
+    }
+  }
+}
+
+write.csv(tab1,"tableone-handmade.csv",row.names=F)
+
+#-Tableone R package 이용해서 만들어보기---------------------------------------------------------------------------------------------------
+
+library(tableone)
+
 ## Variable list: For select UI in ShinyApps
 varlist <- list(
   Base = c("DP", "Age", "Sex", "BMI", "BMI_cat",  "DM", "HTN", "COPD", "CoronaryArteryDisease", "ChronicRenalDisease", "PrevAbdominalOp", "preOpChemo", 
-           "Hb", "Hb_below9", "Hb_below10", "Albumin", "Albumin_below3", "PLT", "PLT_below50", "PLT_below100", "PT_INR", "PT_INR_over1.5", "TumorSize", "Liposarcoma_postop", "RTgray",
-           "FNCLCC", "Resection", grep("Resection_", names(out), value = T), "opTime", "intraOpTransfusion", "EBL"),
-  Complication = c("ClavienDindoComplication", "postOpTransfusion", "ICUcare", "ReOP", "HospitalDay", names(out)[45:ncol(out)]),
+           "Hb", "Hb_below9", "Hb_below10", "Albumin", "Albumin_below3", "PLT", "PLT_below50", "PLT_below100", "PT_INR", "PT_INR_over1.5", "TumorSize",
+           "Liposarcoma_postop", "RTgray","FNCLCC",
+           "Resection", grep("Resection_", names(out), value = T), "opTime", "intraOpTransfusion", "EBL"),
+  Complication = c("ClavienDindoComplication", "postOpTransfusion", "ICUcare", "ReOP", "HospitalDay", names(out)[47:ncol(out)]),
   Event = c("Death", "recur_local"),
   Day = c("day_FU", "recur_day")
 )
 
-library(data.table)
-## Exclude 환자번호 :이제부터 data.table 패키지 사용
 out <- data.table(out[, unlist(varlist)])
-
-## 범주형 변수: 범주 5 이하, recur_site
+my_vars<-names(out)
 factor_vars <- c(names(out)[sapply(out, function(x){length(table(x))}) <= 5])
 out[, (factor_vars) := lapply(.SD, factor), .SDcols = factor_vars]
-conti_vars <- setdiff(names(out), factor_vars)
+conti_vars <- setdiff(my_vars, factor_vars)
 
+tab2 <- CreateTableOne(vars=my_vars,strata="DP",data=out,factorVars=factor_vars)
+write.csv(print(tab2,showAllLevels = TRUE),"tableone-package.csv",row.names=TRUE)
 
-# ## Label: Use jstable::mk.lev 
-# library(jstable)
-# out.label <- mk.lev(out)
-# 
-# ## Label 0, 1 인건 No, Yes 로 바꿈
-# vars.01 <- names(out)[sapply(lapply(out, levels), function(x){identical(x, c("0", "1"))})]
-# 
-# for (v in vars.01){
-#   out.label[variable == v, val_label := c("No", "Yes")]
-# }
-# 
-# ## Label: Specific
-# out.label[variable == "DP", `:=`(var_label = "Distal Pancreatectomy", val_label = c("DP", "Non-DP"))]
+#fisher-test 적용 안되고 다 chisq test 로 되는 것 같고..
+#t-test p value 값도 왜 인지 다르다.. 'Two-group ANOVA is equivalent of t-test.'라고 되어있는데 왜 다른지 모르겠다.
